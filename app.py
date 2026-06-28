@@ -10,6 +10,11 @@ from utils.vector_store import create_vector_store
 # Load Environment Variables
 # -----------------------------
 load_dotenv()
+st.set_page_config(
+    page_title="GenAI PDF ChatBot",
+    page_icon="📚",
+    layout="wide"
+)
 
 # -----------------------------
 # Session State Initialization
@@ -23,8 +28,10 @@ if "uploaded_pdf" not in st.session_state:
 # -----------------------------
 # App Title
 # -----------------------------
-st.title("📚 GenAI PDF ChatBot")
-st.caption("Upload a PDF and ask questions using AI")
+st.title("GenAI PDF ChatBot")
+st.info(
+    " Welcome! Upload a PDF and ask questions. "
+)
 
 # -----------------------------
 # Upload PDF
@@ -139,8 +146,12 @@ Built using
     # Retriever
     # -----------------------------------
     retriever = vector_store.as_retriever(
-        search_type="similarity",
-        search_kwargs={"k": 5}
+        search_type="mmr",
+        search_kwargs={
+            "k": 5,
+            "fetch_k": 10,
+            "lambda_mult": 0.7
+            }
     )
 
     # -----------------------------------
@@ -200,7 +211,7 @@ Built using
         st.markdown("### Question")
         st.info(user_question)
 
-        with st.spinner("Thinking..."):
+        with st.spinner("Generating answer..."):
 
             result = qa_chain.invoke(
                 {"query": user_question}
