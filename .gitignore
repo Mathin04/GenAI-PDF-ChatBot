@@ -1,18 +1,6 @@
-# Virtual Environment
 venv/
-
-# Environment Variables
 .env
-
-# FAISS Database
 faiss_index/
-
-# Uploaded PDFs
-*.pdf
-
-# Python Cache
+.history/
 __pycache__/
 *.pyc
-
-# VS Code
-.vscode/

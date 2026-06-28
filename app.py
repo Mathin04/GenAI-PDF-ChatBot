@@ -1,23 +1,34 @@
-import os
 from dotenv import load_dotenv
-
 import streamlit as st
 
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.vectorstores import FAISS
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain.chains import RetrievalQA
 
-# Load API Key
+from utils.vector_store import create_vector_store
+
+# -----------------------------
+# Load Environment Variables
+# -----------------------------
 load_dotenv()
 
-# Chat History
+# -----------------------------
+# Session State Initialization
+# -----------------------------
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-st.title("PDF ChatBot")
+if "uploaded_pdf" not in st.session_state:
+    st.session_state.uploaded_pdf = None
 
+# -----------------------------
+# App Title
+# -----------------------------
+st.title("📚 GenAI PDF ChatBot")
+st.caption("Upload a PDF and ask questions using AI")
+
+# -----------------------------
+# Upload PDF
+# -----------------------------
 uploaded_file = st.file_uploader(
     "Upload your PDF",
     type="pdf"
@@ -25,65 +36,159 @@ uploaded_file = st.file_uploader(
 
 if uploaded_file:
 
-    st.success(f" {uploaded_file.name} uploaded successfully!")
+    # -----------------------------------
+    # Detect New PDF Upload
+    # -----------------------------------
+    if st.session_state.uploaded_pdf != uploaded_file.name:
 
+        st.session_state.uploaded_pdf = uploaded_file.name
+
+        if "vector_store" in st.session_state:
+            del st.session_state.vector_store
+
+        if "total_pages" in st.session_state:
+            del st.session_state.total_pages
+
+        st.session_state.messages = []
+
+    # Save PDF
     with open(uploaded_file.name, "wb") as f:
         f.write(uploaded_file.getbuffer())
 
-    # Load PDF
-    loader = PyPDFLoader(uploaded_file.name)
-    documents = loader.load()
+    # -----------------------------------
+    # Create Vector Store Only Once
+    # -----------------------------------
+    if "vector_store" not in st.session_state:
 
-    # Split Text
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=200
+        with st.spinner("Processing PDF... Please wait..."):
+
+            vector_store, total_pages = create_vector_store(
+                uploaded_file.name
+            )
+
+            st.session_state.vector_store = vector_store
+            st.session_state.total_pages = total_pages
+
+        st.success(f"'{uploaded_file.name}' processed successfully!")
+
+    vector_store = st.session_state.vector_store
+    total_pages = st.session_state.total_pages
+
+    # -----------------------------------
+    # Sidebar
+    # -----------------------------------
+    st.sidebar.title("GenAI PDF ChatBot")
+
+    st.sidebar.markdown("---")
+
+    st.sidebar.subheader("Uploaded PDF")
+
+    st.sidebar.write(f"**File Name:** {uploaded_file.name}")
+
+    file_size = uploaded_file.size / 1024
+
+    st.sidebar.write(f"**File Size:** {file_size:.2f} KB")
+
+    st.sidebar.write(f"**Pages:** {total_pages}")
+
+    st.sidebar.markdown("---")
+
+    question_count = len(
+        [m for m in st.session_state.messages if m["role"] == "user"]
     )
 
-    chunks = text_splitter.split_documents(documents)
+    st.sidebar.subheader("Chat")
 
-    # Create Embeddings
-    embeddings = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2"
+    st.sidebar.write(f"Questions Asked: {question_count}")
+
+    if st.sidebar.button("Clear Chat"):
+
+        st.session_state.messages = []
+
+        if "vector_store" in st.session_state:
+            del st.session_state.vector_store
+
+        if "total_pages" in st.session_state:
+            del st.session_state.total_pages
+
+        st.session_state.uploaded_pdf = None
+
+        st.rerun()
+
+    st.sidebar.markdown("---")
+
+    st.sidebar.info(
+        """
+GenAI PDF ChatBot
+
+Built using
+
+• LangChain
+
+• Hugging Face
+
+• FAISS
+
+• Gemini 2.5 Flash
+
+• Streamlit
+"""
     )
 
-    # Create FAISS Database
-    vector_store = FAISS.from_documents(
-        chunks,
-        embeddings
+    # -----------------------------------
+    # Retriever
+    # -----------------------------------
+    retriever = vector_store.as_retriever(
+        search_type="similarity",
+        search_kwargs={"k": 5}
     )
 
-    vector_store.save_local("faiss_index")
-
-    # Create Retriever
-    retriever = vector_store.as_retriever()
-
+    # -----------------------------------
     # Gemini Model
+    # -----------------------------------
     llm = ChatGoogleGenerativeAI(
         model="gemini-2.5-flash",
         temperature=0.3
     )
 
+    # -----------------------------------
+    # QA Chain
+    # -----------------------------------
+    qa_chain = RetrievalQA.from_chain_type(
+        llm=llm,
+        chain_type="stuff",
+        retriever=retriever,
+        return_source_documents=True
+    )
+
     st.subheader("Ask Questions From PDF")
 
-    # Display Previous Chat Messages
+    # -----------------------------------
+    # Display Chat History
+    # -----------------------------------
     for message in st.session_state.messages:
+
         if message["role"] == "user":
+
             st.markdown("---")
             st.markdown("### Question")
             st.info(message["content"])
-        else:   
+
+        else:
+
             st.markdown("### Answer")
             st.success(message["content"])
             st.markdown("---")
+
+    # -----------------------------------
     # Chat Input
+    # -----------------------------------
     user_question = st.chat_input(
-        "Ask a question about the PDF"
+        "Ask anything from the uploaded PDF..."
     )
 
     if user_question:
 
-        # Save User Message
         st.session_state.messages.append(
             {
                 "role": "user",
@@ -91,51 +196,25 @@ if uploaded_file:
             }
         )
 
-        # Show User Message
         st.markdown("---")
         st.markdown("### Question")
         st.info(user_question)
 
-        # Retrieve Relevant Chunks
-        retrieved_docs = retriever.invoke(
-            user_question
-        )
-
-        # Build Context
-        context = "\n\n".join(
-            [doc.page_content for doc in retrieved_docs]
-        )
-
-        # Prompt
-        prompt = f"""
-You are a helpful PDF assistant.
-
-Answer ONLY using the information present in the PDF context.
-
-If the answer is not available in the PDF, say:
-
-"I could not find this information in the uploaded PDF."
-
-Context:
-{context}
-
-Question:
-{user_question}
-"""
-
-        # Gemini Response
         with st.spinner("Thinking..."):
-            response = llm.invoke(prompt)
 
-        # Show Assistant Message
+            result = qa_chain.invoke(
+                {"query": user_question}
+            )
+
+        answer = result["result"]
+
         st.markdown("### Answer")
-        st.success(response.content)
+        st.success(answer)
         st.markdown("---")
 
-        # Save Assistant Message
         st.session_state.messages.append(
             {
                 "role": "assistant",
-                "content": response.content
+                "content": answer
             }
         )
