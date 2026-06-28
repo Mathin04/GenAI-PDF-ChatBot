@@ -6,13 +6,10 @@ langchain-community==0.2.16
 langchain-google-genai==1.0.10
 
 faiss-cpu==1.8.0
-
 pypdf==6.0.0
 
 python-dotenv==1.0.1
-
 google-generativeai==0.7.2
 
 requests==2.32.0
-
 numpy==1.26.4
