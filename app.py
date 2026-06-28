@@ -1,5 +1,6 @@
 from dotenv import load_dotenv
 import streamlit as st
+import tempfile
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.chains import RetrievalQA
@@ -7,9 +8,10 @@ from langchain.chains import RetrievalQA
 from utils.vector_store import create_vector_store
 
 # -----------------------------
-# Load Environment Variables
+# Load environment
 # -----------------------------
 load_dotenv()
+
 st.set_page_config(
     page_title="GenAI PDF ChatBot",
     page_icon="📚",
@@ -17,7 +19,7 @@ st.set_page_config(
 )
 
 # -----------------------------
-# Session State Initialization
+# Session State
 # -----------------------------
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -25,207 +27,121 @@ if "messages" not in st.session_state:
 if "uploaded_pdf" not in st.session_state:
     st.session_state.uploaded_pdf = None
 
-# -----------------------------
-# App Title
-# -----------------------------
-st.title("GenAI PDF ChatBot")
-st.info(
-    " Welcome! Upload a PDF and ask questions. "
-)
+if "qa_chain" not in st.session_state:
+    st.session_state.qa_chain = None
 
 # -----------------------------
-# Upload PDF
+# UI Header
 # -----------------------------
-uploaded_file = st.file_uploader(
-    "Upload your PDF",
-    type="pdf"
-)
+st.title("📚 GenAI PDF ChatBot")
+st.info("Upload a PDF and ask questions from it.")
+
+# -----------------------------
+# File Upload
+# -----------------------------
+uploaded_file = st.file_uploader("Upload your PDF", type="pdf")
 
 if uploaded_file:
 
-    # -----------------------------------
-    # Detect New PDF Upload
-    # -----------------------------------
+    # Reset when new file uploaded
     if st.session_state.uploaded_pdf != uploaded_file.name:
-
         st.session_state.uploaded_pdf = uploaded_file.name
-
-        if "vector_store" in st.session_state:
-            del st.session_state.vector_store
-
-        if "total_pages" in st.session_state:
-            del st.session_state.total_pages
-
         st.session_state.messages = []
+        st.session_state.qa_chain = None
 
-    # Save PDF
-    with open(uploaded_file.name, "wb") as f:
-        f.write(uploaded_file.getbuffer())
+    # Save file safely (IMPORTANT FIX)
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+        tmp.write(uploaded_file.getbuffer())
+        pdf_path = tmp.name
 
-    # -----------------------------------
-    # Create Vector Store Only Once
-    # -----------------------------------
-    if "vector_store" not in st.session_state:
+    # -----------------------------
+    # Build Vector Store (ONLY ONCE)
+    # -----------------------------
+    if st.session_state.qa_chain is None:
 
-        with st.spinner("Processing PDF... Please wait..."):
+        with st.spinner("Processing PDF... Please wait ⏳"):
 
-            vector_store, total_pages = create_vector_store(
-                uploaded_file.name
+            vector_store, total_pages = create_vector_store(pdf_path)
+
+            retriever = vector_store.as_retriever(
+                search_type="mmr",
+                search_kwargs={
+                    "k": 5,
+                    "fetch_k": 10,
+                    "lambda_mult": 0.7
+                }
             )
 
-            st.session_state.vector_store = vector_store
+            llm = ChatGoogleGenerativeAI(
+                model="gemini-2.5-flash",
+                temperature=0.3
+            )
+
+            st.session_state.qa_chain = RetrievalQA.from_chain_type(
+                llm=llm,
+                chain_type="stuff",
+                retriever=retriever,
+                return_source_documents=True
+            )
+
             st.session_state.total_pages = total_pages
 
-        st.success(f"'{uploaded_file.name}' processed successfully!")
+        st.success("PDF processed successfully!")
 
-    vector_store = st.session_state.vector_store
-    total_pages = st.session_state.total_pages
+    qa_chain = st.session_state.qa_chain
 
-    # -----------------------------------
-    # Sidebar
-    # -----------------------------------
-    st.sidebar.title("GenAI PDF ChatBot")
+    # -----------------------------
+    # Sidebar Info
+    # -----------------------------
+    st.sidebar.title("📄 PDF Info")
+    st.sidebar.write(f"File: {uploaded_file.name}")
+    st.sidebar.write(f"Pages: {st.session_state.get('total_pages', 'N/A')}")
 
-    st.sidebar.markdown("---")
-
-    st.sidebar.subheader("Uploaded PDF")
-
-    st.sidebar.write(f"**File Name:** {uploaded_file.name}")
-
-    file_size = uploaded_file.size / 1024
-
-    st.sidebar.write(f"**File Size:** {file_size:.2f} KB")
-
-    st.sidebar.write(f"**Pages:** {total_pages}")
-
-    st.sidebar.markdown("---")
-
-    question_count = len(
-        [m for m in st.session_state.messages if m["role"] == "user"]
-    )
-
-    st.sidebar.subheader("Chat")
-
-    st.sidebar.write(f"Questions Asked: {question_count}")
-
-    if st.sidebar.button("Clear Chat"):
-
+    if st.sidebar.button("🧹 Clear Chat"):
         st.session_state.messages = []
-
-        if "vector_store" in st.session_state:
-            del st.session_state.vector_store
-
-        if "total_pages" in st.session_state:
-            del st.session_state.total_pages
-
+        st.session_state.qa_chain = None
         st.session_state.uploaded_pdf = None
-
         st.rerun()
 
     st.sidebar.markdown("---")
+    st.sidebar.info("Built with LangChain + FAISS + Gemini + Streamlit")
 
-    st.sidebar.info(
-        """
-GenAI PDF ChatBot
-
-Built using
-
-• LangChain
-
-• Hugging Face
-
-• FAISS
-
-• Gemini 2.5 Flash
-
-• Streamlit
-"""
-    )
-
-    # -----------------------------------
-    # Retriever
-    # -----------------------------------
-    retriever = vector_store.as_retriever(
-        search_type="mmr",
-        search_kwargs={
-            "k": 5,
-            "fetch_k": 10,
-            "lambda_mult": 0.7
-            }
-    )
-
-    # -----------------------------------
-    # Gemini Model
-    # -----------------------------------
-    llm = ChatGoogleGenerativeAI(
-        model="gemini-2.5-flash",
-        temperature=0.3
-    )
-
-    # -----------------------------------
-    # QA Chain
-    # -----------------------------------
-    qa_chain = RetrievalQA.from_chain_type(
-        llm=llm,
-        chain_type="stuff",
-        retriever=retriever,
-        return_source_documents=True
-    )
-
-    st.subheader("Ask Questions From PDF")
-
-    # -----------------------------------
-    # Display Chat History
-    # -----------------------------------
-    for message in st.session_state.messages:
-
-        if message["role"] == "user":
-
-            st.markdown("---")
-            st.markdown("### Question")
-            st.info(message["content"])
-
+    # -----------------------------
+    # Chat History
+    # -----------------------------
+    for msg in st.session_state.messages:
+        if msg["role"] == "user":
+            st.markdown("### 🧑 You")
+            st.info(msg["content"])
         else:
-
-            st.markdown("### Answer")
-            st.success(message["content"])
+            st.markdown("### 🤖 Bot")
+            st.success(msg["content"])
             st.markdown("---")
 
-    # -----------------------------------
+    # -----------------------------
     # Chat Input
-    # -----------------------------------
-    user_question = st.chat_input(
-        "Ask anything from the uploaded PDF..."
-    )
+    # -----------------------------
+    user_question = st.chat_input("Ask something from your PDF...")
 
     if user_question:
 
-        st.session_state.messages.append(
-            {
-                "role": "user",
-                "content": user_question
-            }
-        )
+        st.session_state.messages.append({
+            "role": "user",
+            "content": user_question
+        })
 
-        st.markdown("---")
-        st.markdown("### Question")
+        st.markdown("### 🧑 You")
         st.info(user_question)
 
-        with st.spinner("Generating answer..."):
+        with st.spinner("Thinking... 🤔"):
 
-            result = qa_chain.invoke(
-                {"query": user_question}
-            )
+            result = qa_chain.invoke({"query": user_question})
+            answer = result["result"]
 
-        answer = result["result"]
-
-        st.markdown("### Answer")
+        st.markdown("### 🤖 Bot")
         st.success(answer)
-        st.markdown("---")
 
-        st.session_state.messages.append(
-            {
-                "role": "assistant",
-                "content": answer
-            }
-        )
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": answer
+        })

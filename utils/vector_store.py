@@ -2,15 +2,12 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
-
 import streamlit as st
-
 
 @st.cache_resource
 def create_vector_store(pdf_path):
 
     loader = PyPDFLoader(pdf_path)
-
     documents = loader.load()
 
     splitter = RecursiveCharacterTextSplitter(
@@ -24,9 +21,6 @@ def create_vector_store(pdf_path):
         model_name="sentence-transformers/all-MiniLM-L6-v2"
     )
 
-    vector_store = FAISS.from_documents(
-        chunks,
-        embeddings
-    )
+    vector_store = FAISS.from_documents(chunks, embeddings)
 
     return vector_store, len(documents)
