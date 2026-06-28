@@ -1,7 +1,7 @@
 from dotenv import load_dotenv
 import streamlit as st
 
-from langchain_google_genai import ChatGoogleGenerativeAI ✅
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.chains import RetrievalQA
 
 from utils.vector_store import create_vector_store
